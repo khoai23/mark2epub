@@ -39,7 +39,7 @@ def get_packageOPF_XML(md_filenames=[],image_filenames=[],css_filenames=[],descr
     package.setAttribute('xmlns',"http://www.idpf.org/2007/opf")
     package.setAttribute('version',"3.0")
     package.setAttribute('xml:lang',"en")
-    package.setAttribute("unique-identifier","pub-id")
+    package.setAttribute("unique-identifier","book-id")
 
     ## Now building the metadata
 
@@ -47,10 +47,12 @@ def get_packageOPF_XML(md_filenames=[],image_filenames=[],css_filenames=[],descr
     metadata.setAttribute('xmlns:dc', 'http://purl.org/dc/elements/1.1/')
 
     for k,v in description_data["metadata"].items():
+        # print("Creating metadata key: ", k, "->", v)
         if len(v):
             x = doc.createElement(k)
             for metadata_type,id_label in [("dc:title","title"),("dc:creator","creator"),("dc:identifier","book-id")]:
                 if k==metadata_type:
+                    # print("Adding unique ID: ", k, "->", id_label)
                     x.setAttribute('id',id_label)
             x.appendChild(doc.createTextNode(v))
             metadata.appendChild(x)
@@ -81,10 +83,15 @@ def get_packageOPF_XML(md_filenames=[],image_filenames=[],css_filenames=[],descr
     x.setAttribute('media-type',"application/xhtml+xml")
     manifest.appendChild(x)
 
-    for i,md_filename in enumerate(md_filenames):
+    for i, md_filename in enumerate(md_filenames):
+        # allow paired ref (internal filename), filename (true filename) tuple feed
+        if isinstance(md_filename, str):
+            ref = filename = md_filename.split(".")[0]
+        else:
+            ref, filename = md_filename
         x = doc.createElement('item')
         x.setAttribute('id',"s{:05d}".format(i))
-        x.setAttribute('href',"s{:05d}-{}.xhtml".format(i,md_filename.split(".")[0]))
+        x.setAttribute('href',"s{:05d}-{}.xhtml".format(i, ref))
         x.setAttribute('media-type',"application/xhtml+xml")
         manifest.appendChild(x)
 
@@ -126,7 +133,7 @@ def get_packageOPF_XML(md_filenames=[],image_filenames=[],css_filenames=[],descr
     x.setAttribute('idref',"titlepage")
     x.setAttribute('linear',"yes")
     spine.appendChild(x)
-    for i,md_filename in enumerate(all_md_filenames):
+    for i,md_filename in enumerate(md_filenames):
         x = doc.createElement('itemref')
         x.setAttribute('idref',"s{:05d}".format(i))
         x.setAttribute('linear',"yes")
@@ -170,7 +177,7 @@ def get_coverpage_XML(cover_image_path):
 
     return all_xhtml
 
-def get_TOC_XML(default_css_filenames,markdown_filenames):
+def get_TOC_XML(default_css_filenames, markdown_filenames):
     ## Returns the XML data for the TOC.xhtml file
 
     toc_xhtml = """<?xml version="1.0" encoding="UTF-8"?>\n"""
@@ -183,8 +190,14 @@ def get_TOC_XML(default_css_filenames,markdown_filenames):
 
     toc_xhtml += """</head>\n<body>\n"""
     toc_xhtml += """<nav epub:type="toc" role="doc-toc" id="toc">\n<h2>Contents</h2>\n<ol epub:type="list">"""
-    for i,md_filename in enumerate(markdown_filenames):
-        toc_xhtml += """<li><a href="s{:05d}-{}.xhtml">{}</a></li>""".format(i,md_filename.split(".")[0],md_filename.split(".")[0])
+    for i, md_filename in enumerate(markdown_filenames):
+        # allow paired ref (internal filename), filename (true filename) tuple feed
+        if isinstance(md_filename, str):
+            ref = filename = md_filename.split(".")[0]
+        else:
+            ref, filename = md_filename
+#        print("TOC: ", ref, filename)
+        toc_xhtml += """<li><a href="s{:05d}-{}.xhtml">{}</a></li>""".format(i, ref, filename)
     toc_xhtml += """</ol>\n</nav>\n</body>\n</html>"""
 
     return toc_xhtml
@@ -197,15 +210,20 @@ def get_TOCNCX_XML(markdown_filenames):
     toc_ncx += """<head>\n</head>\n"""
     toc_ncx += """<navMap>\n"""
     for i,md_filename in enumerate(markdown_filenames):
+        if isinstance(md_filename, str):
+            ref = filename = md_filename.split(".")[0]
+        else:
+            ref, filename = md_filename 
+#        print("TOCNCX: ", ref, filename)
         toc_ncx += """<navPoint id="navpoint-{}">\n""".format(i)
-        toc_ncx += """<navLabel>\n<text>{}</text>\n</navLabel>""".format(md_filename.split(".")[0])
-        toc_ncx += """<content src="s{:05d}-{}.xhtml"/>""".format(i,md_filename.split(".")[0])
+        toc_ncx += """<navLabel>\n<text>{}</text>\n</navLabel>""".format(filename)
+        toc_ncx += """<content src="s{:05d}-{}.xhtml"/>""".format(i, ref)
         toc_ncx += """ </navPoint>"""
     toc_ncx += """</navMap>\n</ncx>"""
 
     return toc_ncx
 
-def get_chapter_XML(md_filename,css_filenames):
+def get_chapter_XML(md_filename,css_filenames, work_dir=None):
     ## Returns the XML data for a given markdown chapter file, with the corresponding css chapter files
 
     with open(os.path.join(work_dir,md_filename),"r",encoding="utf-8") as f:
@@ -230,29 +248,22 @@ def get_chapter_XML(md_filename,css_filenames):
 
     return all_xhtml
 
-if __name__ == "__main__":
-    if len(sys.argv[1:])<2:
-        print("\nUsage:\n    python md2epub.py <markdown_directory> <output_file.epub>")
-        exit(1)
-
-
-    work_dir = sys.argv[1]
-    output_path = sys.argv[2]
-
+def create_ebook(work_dir, output_path):
+    """Function to create the ebook """
     images_dir = os.path.join(work_dir,r'images/')
     css_dir = os.path.join(work_dir,r'css/')
-
-    ## Reading the JSON file containing the description of the eBook
-    ## and compiling the list of relevant Markdown, CSS, and image files
 
     with open(os.path.join(work_dir,"description.json"),"r") as f:
         json_data = json.load(f)
 
-    all_md_filenames=[]
-    all_css_filenames=json_data["default_css"][:]
+#    all_md_filenames = []
+    referenced_filenames = []
+    all_css_filenames=list(json_data.get("default_css", []))
     for chapter in json_data["chapters"]:
-        if not chapter["markdown"] in all_md_filenames:
-            all_md_filenames.append(chapter["markdown"])
+#        if not chapter["markdown"] in all_md_filenames:
+#            all_md_filenames.append(chapter["markdown"])
+        reference = chapter["markdown"].split(".")[0] # minus the md
+        referenced_filenames.append( (reference, chapter.get("name", reference)) )  # if have name use that; if not fallback to the raw reference str
         if len(chapter["css"]) and (not chapter["css"] in all_css_filenames):
             all_css_filenames.append(chapter["css"])
     all_image_filenames = get_all_filenames(images_dir,extensions=["gif","jpg","jpeg","png"])
@@ -270,7 +281,7 @@ if __name__ == "__main__":
         myZipFile.writestr("META-INF/container.xml",container_data, zipfile.ZIP_DEFLATED )
 
         ## Then, the package.opf file itself
-        package_data = get_packageOPF_XML(md_filenames=all_md_filenames,
+        package_data = get_packageOPF_XML(md_filenames=referenced_filenames,
                                           image_filenames=all_image_filenames,
                                           css_filenames=all_css_filenames,
                                           description_data=json_data
@@ -284,22 +295,22 @@ if __name__ == "__main__":
         ## Now, we are going to convert the Markdown files to xhtml files
         for i,chapter in enumerate(json_data["chapters"]):
             chapter_md_filename = chapter["markdown"]
-            chapter_css_filenames = json_data["default_css"][:]
+            chapter_css_filenames = list(json_data.get("default_css", []))
             if len(chapter["css"]):
                 chapter_css_filenames.append(chapter["css"])
 
-            chapter_data = get_chapter_XML(chapter_md_filename,chapter_css_filenames)
-            myZipFile.writestr("OPS/s{:05d}-{}.xhtml".format(i,chapter_md_filename.split(".")[0]),
+            chapter_data = get_chapter_XML(chapter_md_filename,chapter_css_filenames, work_dir=work_dir)
+            myZipFile.writestr("OPS/s{:05d}-{}.xhtml".format(i, chapter_md_filename.split(".")[0]),
                                chapter_data.encode('utf-8'),
                                zipfile.ZIP_DEFLATED)
 
 
         ## Writing the TOC.xhtml file
-        toc_xml_data = get_TOC_XML(json_data["default_css"],all_md_filenames)
+        toc_xml_data = get_TOC_XML(json_data["default_css"], referenced_filenames)
         myZipFile.writestr("OPS/TOC.xhtml",toc_xml_data.encode('utf-8'),zipfile.ZIP_DEFLATED)
 
         ## Writing the TOC.ncx file
-        toc_ncx_data = get_TOCNCX_XML(all_md_filenames)
+        toc_ncx_data = get_TOCNCX_XML(referenced_filenames)
         myZipFile.writestr("OPS/toc.ncx",toc_ncx_data.encode('utf-8'),zipfile.ZIP_DEFLATED)
 
         ## Copy image files
@@ -317,5 +328,20 @@ if __name__ == "__main__":
             myZipFile.writestr("OPS/css/{}".format(css_filename),
                                filedata,
                                zipfile.ZIP_DEFLATED)
+    #print("Ebook creation done.")
+
+
+if __name__ == "__main__":
+    if len(sys.argv[1:])<2:
+        print("\nUsage:\n    python md2epub.py <markdown_directory> <output_file.epub>")
+        exit(1)
+
+
+    work_dir = sys.argv[1]
+    output_path = sys.argv[2]
+
+    ## Reading the JSON file containing the description of the eBook
+    ## and compiling the list of relevant Markdown, CSS, and image files
+
 
     print("eBook creation complete")
