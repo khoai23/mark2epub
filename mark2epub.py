@@ -3,7 +3,8 @@ import os
 from xml.dom import minidom
 import zipfile
 import sys
-import json
+import json 
+import datetime
 
 ## markdown version 3.1
 
@@ -56,7 +57,12 @@ def get_packageOPF_XML(md_filenames=[],image_filenames=[],css_filenames=[],descr
                     x.setAttribute('id',id_label)
             x.appendChild(doc.createTextNode(v))
             metadata.appendChild(x)
-
+    # always set a metadata dcterms:modified
+    modified_element = doc.createElement("meta")
+    modified_element.setAttribute("property", "dcterms:modified")
+    now_date = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+    modified_element.appendChild(doc.createTextNode(now_date))
+    metadata.appendChild(modified_element)
 
     ## Now building the manifest
 
@@ -202,13 +208,21 @@ def get_TOC_XML(default_css_filenames, markdown_filenames):
 
     return toc_xhtml
 
-def get_TOCNCX_XML(markdown_filenames):
-    ## Returns the XML data for the TOC.ncx file
+def get_TOCNCX_XML(markdown_filenames, metadata):
+    ## Returns the XML data for the TOC.ncx file 
+    book_title = metadata.get("dc:title", "Unknown Ebook")
+    identifier = metadata.get("dc:identifier", "N/A")
 
-    toc_ncx = """<?xml version="1.0" encoding="UTF-8"?>\n"""
-    toc_ncx += """<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" xml:lang="fr" version="2005-1">\n"""
-    toc_ncx += """<head>\n</head>\n"""
-    toc_ncx += """<navMap>\n"""
+    toc_ncx = """<?xml version="1.0" encoding="UTF-8"?>\n
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" xml:lang="en" version="2005-1">\n
+<head>
+    <meta name="dtb:uid" content="{:s}" />
+    <meta name="dtb:depth" content="1" />
+    <meta name="dtb:totalPageCount" content="0" />
+    <meta name="dtb:maxPageNumber" content="0" />
+</head>\n
+<docTitle><text>{:s}</text></docTitle>
+<navMap>\n""".format(identifier, book_title)
     for i,md_filename in enumerate(markdown_filenames):
         if isinstance(md_filename, str):
             ref = filename = md_filename.split(".")[0]
@@ -240,8 +254,9 @@ def get_chapter_XML(md_filename,css_filenames, work_dir=None):
 
     for css_filename in css_filenames:
         all_xhtml += """<link rel="stylesheet" href="css/{}" type="text/css"/>\n""".format(css_filename)
-
-    all_xhtml += """</head>\n<body>\n"""
+    
+    # since title is not visible, might as well add in the original filename 
+    all_xhtml += """</head><title>{:s}</title>\n<body>\n""".format(md_filename)
 
     all_xhtml += html_text
     all_xhtml += """\n</body>\n</html>"""
@@ -274,7 +289,7 @@ def create_ebook(work_dir, output_path):
     with zipfile.ZipFile(output_path, "w" ) as myZipFile:
 
         ## First, write the mimetype
-        myZipFile.writestr("mimetype","application/epub+zip", zipfile.ZIP_DEFLATED )
+        myZipFile.writestr("mimetype","application/epub+zip", zipfile.ZIP_STORED )
 
         ## Then, the file container.xml which just points to package.opf
         container_data = get_container_XML()
@@ -310,7 +325,7 @@ def create_ebook(work_dir, output_path):
         myZipFile.writestr("OPS/TOC.xhtml",toc_xml_data.encode('utf-8'),zipfile.ZIP_DEFLATED)
 
         ## Writing the TOC.ncx file
-        toc_ncx_data = get_TOCNCX_XML(referenced_filenames)
+        toc_ncx_data = get_TOCNCX_XML(referenced_filenames, json_data["metadata"])
         myZipFile.writestr("OPS/toc.ncx",toc_ncx_data.encode('utf-8'),zipfile.ZIP_DEFLATED)
 
         ## Copy image files
